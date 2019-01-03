@@ -1,102 +1,54 @@
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
+#include <cassert>
 #include <iostream>
-#include <stdexcept>
-#include <functional>
-#include <cstdlib>
-#include <vector>
+#include "hello_triangle_application.h"
 
-class HelloTriangleApplication {
-public:
-    void run() {
-        initWindow();
-        initVulkan();
-        mainLoop();
-        cleanup();
-    }
-
-private:
-    void initWindow() {
-        glfwInit();
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
-    }
-
-    void createInstance(){
-        VkApplicationInfo appInfo = {};
-        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "Hello Triangle";
-        appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.pEngineName = "No Engine";
-        appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
-
-        VkInstanceCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pApplicationInfo = &appInfo;
-
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions;
-
-        glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-        createInfo.enabledExtensionCount = glfwExtensionCount;
-        createInfo.ppEnabledExtensionNames = glfwExtensions;
-        createInfo.enabledLayerCount = 0;
-
-        if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create instance!");
-        }
-
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-
-        std::vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-        std::cout << "available extensions:" << std::endl;
-
-        for (const auto& extension : extensions) {
-            std::cout << "\t" << extension.extensionName << std::endl;
-        }
-
-    }
-
-    void initVulkan() {
-        createInstance();
-    }
-
-    void mainLoop() {
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
-        }
-    }
-
-    void cleanup() {
-        vkDestroyInstance(instance, nullptr);
-
-        glfwDestroyWindow(window);
-
-        glfwTerminate();
-    }
-
-
-    const int WIDTH = 800;
-    const int HEIGHT = 600;
-    GLFWwindow* window;
-    VkInstance instance;
-};
+namespace {
+// Callback invoked when window is resized
+void framebufferResizeCallback(GLFWwindow* window, int /*width*/,
+                               int /*height*/) {
+  auto app = reinterpret_cast<HelloTriangleApplication*>(
+      glfwGetWindowUserPointer(window));
+  app->framebuffer_resized = true;
+}
+}  // namespace
 
 int main() {
-    HelloTriangleApplication app;
+  // Initalize GLFW library, glfwTerminate() teardown called in
+  // HelloTriangleApplication destructor
+  glfwInit();
 
-    try {
-        app.run();
-    } catch (const std::exception& e) {
-        std::cerr << e.what() << std::endl;
-        return EXIT_FAILURE;
-    }
+  // Don't create an OpenGL context, we're using Vulkan instead
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    return EXIT_SUCCESS;
+  // Crreate a window, destroyed in HelloTriangleApplication destructor
+  const char* window_title = "Vulkan Triangle";
+  const int window_width = 800;
+  const int window_height = 600;
+  GLFWwindow* window = glfwCreateWindow(window_width, window_height,
+                                        window_title, nullptr, nullptr);
+  assert(nullptr != window);
+
+  // Construct instance of HelloTriangleApplication which initalizes Vulkan
+  std::unique_ptr<HelloTriangleApplication> app;
+  try {
+    app.reset(new HelloTriangleApplication(window));
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // Associate pointer to HelloTriangleApplication instance with window, so
+  // we can access it if the user resizes the window
+  glfwSetWindowUserPointer(window, app.get());
+  glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+  // Construct instance of HelloTriangleApplication which initalizes Vulkan
+  try {
+    app->runMainLoop();
+  } catch (const std::exception& e) {
+    std::cerr << e.what() << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  return EXIT_SUCCESS;
 }

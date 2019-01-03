@@ -1,0 +1,17 @@
+#ifndef SHADERS_H
+#define SHADERS_H
+#include <cstdint>
+
+// SPIR-V binary for vertex shader
+const uint8_t vertex_shader[] = {
+@VERT_SPV_STRING@};
+
+const size_t vertex_shader_length = sizeof(vertex_shader) / sizeof(uint8_t);
+
+// SPIR-V binary for fragment shader
+const uint8_t frag_shader[] = {
+@FRAG_SPV_STRING@};
+
+const size_t frag_shader_length = sizeof(frag_shader) / sizeof(uint8_t);
+
+#endif // SHADERS_H
