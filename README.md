@@ -9,10 +9,10 @@ Author: Ewan Crawford <ewan.cr@gmail.com>
 
 ## Requirements
 
-* [Visual Studio 2019] (https://visualstudio.microsoft.com/downloads/)
-* [GLFW] (https://www.glfw.org/download.html)
-* [GLM] (https://glm.g-truc.net/0.9.9/index.html)
-* [CMake 3.13.2] (https://cmake.org/download/)
+* [Visual Studio 2019](https://visualstudio.microsoft.com/downloads/)
+* [GLFW](https://www.glfw.org/download.html)
+* [GLM](https://glm.g-truc.net/0.9.9/index.html)
+* [CMake 3.13.2](https://cmake.org/download/)
 
 ## License
 

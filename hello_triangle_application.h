@@ -16,7 +16,7 @@ class HelloTriangleApplication {
 
  private:
   void initVulkan();
-  void createInstance();  
+  void createInstance();
   void setupDebugCallback();
   void pickPhysicalDevice();
   void createLogicalDevice();
@@ -44,10 +44,10 @@ class HelloTriangleApplication {
   VkQueue present_queue;
 
   VkSwapchainKHR swap_chain;
-  std::vector<VkImage> swap_chain_images; // Presentable images
-  VkFormat swap_chain_image_format; // Colour depth
-  VkExtent2D swap_chain_extent;  // Resolution of images
-  std::vector<VkImageView> swap_chain_image_views; // Swapchain view
+  std::vector<VkImage> swap_chain_images;           // Presentable images
+  VkFormat swap_chain_image_format;                 // Colour depth
+  VkExtent2D swap_chain_extent;                     // Resolution of images
+  std::vector<VkImageView> swap_chain_image_views;  // Swapchain view
 
   VkRenderPass render_pass;
   VkPipelineLayout pipeline_layout;
@@ -56,10 +56,20 @@ class HelloTriangleApplication {
   VkCommandPool command_pool;
   std::vector<VkCommandBuffer> command_buffers;
 
-  std::vector<VkSemaphore> image_available_semaphores; // signal that an image has been acquired and is ready for rendering
-  std::vector<VkSemaphore> render_finished_semaphores; // signal that rendering has finished and presentation can happen
-  std::vector<VkFence> in_flight_fences; // Performs CPU-GPU synchronization
-  size_t current_frame = 0; // Used to index semaphores, so correct pair is used. TODO: improve by wrapping synchro in struct
+  // Wrap syncrhonization primitvies together
+  struct FrameSync final {
+    // Signal that an image has been acquired and is ready for rendering
+    VkSemaphore image_available_semaphore;
+
+    // Signal that rendering has finished and presentation can happen
+    VkSemaphore render_finished_semaphore;
+
+    // Performs CPU-GPU synchronization
+    VkFence in_flight_fence;
+  };
+
+  std::vector<FrameSync> frame_sync;  // Synchronization primitives per frame
+  size_t current_frame = 0;           // Used to index frame_sync
 
  public:
   bool framebuffer_resized = false;

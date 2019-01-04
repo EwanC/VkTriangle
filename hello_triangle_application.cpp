@@ -337,7 +337,10 @@ void HelloTriangleApplication::initVulkan() {
 
   // TODO comment
   createRenderPass();
+
+  // Load SPIR-V vertex & framgement shaders then setup graphics pipeline
   createGraphicsPipeline();
+
   createFramebuffers();
 
   // Command pools manage memory used to store command buffers
@@ -757,20 +760,31 @@ void HelloTriangleApplication::recreateSwapChain() {
 }
 
 void HelloTriangleApplication::createGraphicsPipeline() {
+  // SPIR-V vertex shader buffer
   const std::vector<uint8_t> vert_shader_code(
       vertex_shader, vertex_shader + vertex_shader_length);
+  // SPIR-V fragment shader buffer
   const std::vector<uint8_t> frag_shader_code(frag_shader,
                                               frag_shader + frag_shader_length);
 
-  VkShaderModule vert_shader_module =
+  // Vertex Shader is run on every vertex and applies transformations to turn
+  // positions from model space to screen space
+  const VkShaderModule vert_shader_module =
       createShaderModule(logical_device, vert_shader_code);
-  VkShaderModule frag_shader_module =
+
+  // Framents are pixels elements that fill the framebuffer, the fragment shader
+  // is invoked on every fragment which survives rasterization to determine
+  // which framebuffer the fragments are written to and with which color and
+  // depth values.
+  const VkShaderModule frag_shader_module =
       createShaderModule(logical_device, frag_shader_code);
 
   VkPipelineShaderStageCreateInfo vert_shader_stage_info = {};
   vert_shader_stage_info.sType =
       VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   vert_shader_stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+  vert_shader_stage_info.module = vert_shader_module;
+  vert_shader_stage_info.pName = "main";
 
   VkPipelineShaderStageCreateInfo frag_shader_stage_info = {};
   frag_shader_stage_info.sType =
@@ -779,26 +793,33 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   frag_shader_stage_info.module = frag_shader_module;
   frag_shader_stage_info.pName = "main";
 
-  vert_shader_stage_info.module = vert_shader_module;
-  vert_shader_stage_info.pName = "main";
+  const VkPipelineShaderStageCreateInfo shaderStages[] = {
+      vert_shader_stage_info, frag_shader_stage_info};
 
-  VkPipelineShaderStageCreateInfo shaderStages[] = {vert_shader_stage_info,
-                                                    frag_shader_stage_info};
-
+  // Struct is empty for now because we're hardcoding the data
   VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
   vertex_input_info.sType =
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  // Binding defines the spacings between data
   vertex_input_info.vertexBindingDescriptionCount = 0;
-  vertex_input_info.pVertexBindingDescriptions = nullptr;  // Optional
+  vertex_input_info.pVertexBindingDescriptions = nullptr;
+  // Attribute descriptions define type of the attributes passed to the vertex
+  // shader, which binding to load them from and at which offset
   vertex_input_info.vertexAttributeDescriptionCount = 0;
-  vertex_input_info.pVertexAttributeDescriptions = nullptr;  // Optional
+  vertex_input_info.pVertexAttributeDescriptions = nullptr;
 
+  // Input assembler stage of graphics pipeline collects the raw vertex data
+  // from the buffers. Defining what kind of geometry will be drawn from the
+  // vertices and if primitive restart should be enabled
   VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
   input_assembly.sType =
       VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  // triangle from every 3 vertices without reuse
   input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   input_assembly.primitiveRestartEnable = VK_FALSE;
 
+  // A viewport describes the region of the framebuffer that the output will
+  // be rendered to, i.e transformation from image to framebuffer
   VkViewport viewport = {};
   viewport.x = 0.0f;
   viewport.y = 0.0f;
@@ -807,6 +828,9 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   viewport.minDepth = 0.0f;
   viewport.maxDepth = 1.0f;
 
+  // Scissor rectangles define in which regions pixels will actually be stored
+  // any pixels outside the rectangles will be discarded by the rasterizer.
+  // We want the entire framebuffer, so don't filter anything out.
   VkRect2D scissor = {};
   scissor.offset = {0, 0};
   scissor.extent = swap_chain_extent;
@@ -818,6 +842,9 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   viewport_state.scissorCount = 1;
   viewport_state.pScissors = &scissor;
 
+  // The rasterizer takes the geometry that is shaped by the vertices from the
+  // vertex shader and turns it into fragments to be colored by the fragment
+  // shader
   VkPipelineRasterizationStateCreateInfo rasterizer = {};
   rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
   rasterizer.depthClampEnable = VK_FALSE;
@@ -826,62 +853,74 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
   rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
   rasterizer.depthBiasEnable = VK_FALSE;
-  rasterizer.depthBiasConstantFactor = 0.0f;  // Optional
-  rasterizer.depthBiasClamp = 0.0f;           // Optional
-  rasterizer.depthBiasSlopeFactor = 0.0f;     // Optional
+  rasterizer.depthBiasConstantFactor = 0.0f;
+  rasterizer.depthBiasClamp = 0.0f;
+  rasterizer.depthBiasSlopeFactor = 0.0f;
 
+  // Multisampling combines the fragment shader results of multiple polygons
+  // that rasterize to the same pixel, a way to perform anti-aliasing.
+  // We disable it for now.
   VkPipelineMultisampleStateCreateInfo multisampling = {};
   multisampling.sType =
       VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
   multisampling.sampleShadingEnable = VK_FALSE;
   multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-  multisampling.minSampleShading = 1.0f;           // Optional
-  multisampling.pSampleMask = nullptr;             // Optional
-  multisampling.alphaToCoverageEnable = VK_FALSE;  // Optional
-  multisampling.alphaToOneEnable = VK_FALSE;       // Optional
+  multisampling.minSampleShading = 1.0f;
+  multisampling.pSampleMask = nullptr;
+  multisampling.alphaToCoverageEnable = VK_FALSE;
+  multisampling.alphaToOneEnable = VK_FALSE;
 
+  // The color blending stage applies operations to mix different fragments
+  // that map to the same pixel in the framebuffer. Fragments can simply
+  // overwrite each other, add up or be mixed based upon transparency.
+
+  // VkPipelineColorBlendAttachmentState is configuration per framebuffer
   VkPipelineColorBlendAttachmentState colour_blend_attachment = {};
+  // Bitwise operation to combine old and new colours
   colour_blend_attachment.colorWriteMask =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  // Fragment shader colour is passed through unmodified with VK_FALSE
   colour_blend_attachment.blendEnable = VK_FALSE;
-  colour_blend_attachment.srcColorBlendFactor =
-      VK_BLEND_FACTOR_ONE;  // Optional
-  colour_blend_attachment.dstColorBlendFactor =
-      VK_BLEND_FACTOR_ZERO;                                // Optional
-  colour_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;  // Optional
-  colour_blend_attachment.srcAlphaBlendFactor =
-      VK_BLEND_FACTOR_ONE;  // Optional
-  colour_blend_attachment.dstAlphaBlendFactor =
-      VK_BLEND_FACTOR_ZERO;                                // Optional
-  colour_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;  // Optional
+  colour_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  colour_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+  colour_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+  colour_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  colour_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  colour_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
+  // VkPipelineColorBlendStateCreateInfo is global colour blending settings
   VkPipelineColorBlendStateCreateInfo colour_blending = {};
   colour_blending.sType =
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   colour_blending.logicOpEnable = VK_FALSE;
-  colour_blending.logicOp = VK_LOGIC_OP_COPY;  // Optional
+  colour_blending.logicOp = VK_LOGIC_OP_COPY;
   colour_blending.attachmentCount = 1;
   colour_blending.pAttachments = &colour_blend_attachment;
-  colour_blending.blendConstants[0] = 0.0f;  // Optional
-  colour_blending.blendConstants[1] = 0.0f;  // Optional
-  colour_blending.blendConstants[2] = 0.0f;  // Optional
-  colour_blending.blendConstants[3] = 0.0f;  // Optional
+  colour_blending.blendConstants[0] = 0.0f;
+  colour_blending.blendConstants[1] = 0.0f;
+  colour_blending.blendConstants[2] = 0.0f;
+  colour_blending.blendConstants[3] = 0.0f;
 
-  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
-                                     VK_DYNAMIC_STATE_LINE_WIDTH};
+  // Dynamic State can be modified without recreating the whole pipeline,
+  // like viewport size and line width
+  const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                           VK_DYNAMIC_STATE_LINE_WIDTH};
 
   VkPipelineDynamicStateCreateInfo dynamic_state = {};
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.dynamicStateCount = 2;
   dynamic_state.pDynamicStates = dynamic_states;
 
+  // Pipeline layouts allow setting of unfiorm values that can be changed at
+  // drawing time to alter the behavior of your shaders without having to
+  // recreate them
   VkPipelineLayoutCreateInfo pipeline_layout_info = {};
   pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipeline_layout_info.setLayoutCount = 0;             // Optional
-  pipeline_layout_info.pSetLayouts = nullptr;          // Optional
-  pipeline_layout_info.pushConstantRangeCount = 0;     // Optional
-  pipeline_layout_info.pPushConstantRanges = nullptr;  // Optional
+  pipeline_layout_info.setLayoutCount = 0;
+  pipeline_layout_info.pSetLayouts = nullptr;
+  pipeline_layout_info.pushConstantRangeCount = 0;
+  pipeline_layout_info.pPushConstantRanges = nullptr;
 
   if (vkCreatePipelineLayout(logical_device, &pipeline_layout_info, nullptr,
                              &pipeline_layout) != VK_SUCCESS) {
@@ -890,21 +929,24 @@ void HelloTriangleApplication::createGraphicsPipeline() {
 
   VkGraphicsPipelineCreateInfo pipeline_info = {};
   pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-  pipeline_info.stageCount = 2;
+  pipeline_info.stageCount = 2;  // vertex & fragment
   pipeline_info.pStages = shaderStages;
   pipeline_info.pVertexInputState = &vertex_input_info;
   pipeline_info.pInputAssemblyState = &input_assembly;
   pipeline_info.pViewportState = &viewport_state;
   pipeline_info.pRasterizationState = &rasterizer;
   pipeline_info.pMultisampleState = &multisampling;
-  pipeline_info.pDepthStencilState = nullptr;  // Optional
+  pipeline_info.pDepthStencilState = nullptr;
   pipeline_info.pColorBlendState = &colour_blending;
-  pipeline_info.pDynamicState = nullptr;  // Optional
+  pipeline_info.pDynamicState = nullptr;
   pipeline_info.layout = pipeline_layout;
   pipeline_info.renderPass = render_pass;
+  // Index of the sub pass where this graphics pipeline will be used
   pipeline_info.subpass = 0;
-  pipeline_info.basePipelineHandle = VK_NULL_HANDLE;  // Optional
-  pipeline_info.basePipelineIndex = -1;               // Optional
+  // Allows you to create a new graphics pipeline deriving from existing
+  // pipeline
+  pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+  pipeline_info.basePipelineIndex = -1;
 
   if (vkCreateGraphicsPipelines(logical_device, VK_NULL_HANDLE, 1,
                                 &pipeline_info, nullptr,
@@ -935,13 +977,14 @@ void HelloTriangleApplication::createCommandPool() {
 }
 
 void HelloTriangleApplication::drawFrame() {
-  vkWaitForFences(logical_device, 1, &in_flight_fences[current_frame], VK_TRUE,
+  FrameSync& sync = frame_sync[current_frame];
+  vkWaitForFences(logical_device, 1, &sync.in_flight_fence, VK_TRUE,
                   std::numeric_limits<uint64_t>::max());
 
   uint32_t image_index;
   VkResult result = vkAcquireNextImageKHR(
       logical_device, swap_chain, std::numeric_limits<uint64_t>::max(),
-      image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
+      sync.image_available_semaphore, VK_NULL_HANDLE, &image_index);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR) {
     recreateSwapChain();
@@ -953,7 +996,7 @@ void HelloTriangleApplication::drawFrame() {
   VkSubmitInfo submit_info = {};
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-  VkSemaphore wait_semaphores[] = {image_available_semaphores[current_frame]};
+  VkSemaphore wait_semaphores[] = {sync.image_available_semaphore};
   VkPipelineStageFlags wait_stages[] = {
       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
   submit_info.waitSemaphoreCount = 1;
@@ -962,13 +1005,13 @@ void HelloTriangleApplication::drawFrame() {
   submit_info.commandBufferCount = 1;
   submit_info.pCommandBuffers = &command_buffers[image_index];
 
-  VkSemaphore signal_semaphores[] = {render_finished_semaphores[current_frame]};
+  VkSemaphore signal_semaphores[] = {sync.render_finished_semaphore};
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores = signal_semaphores;
 
-  vkResetFences(logical_device, 1, &in_flight_fences[current_frame]);
-  if (vkQueueSubmit(graphics_queue, 1, &submit_info,
-                    in_flight_fences[current_frame]) != VK_SUCCESS) {
+  vkResetFences(logical_device, 1, &sync.in_flight_fence);
+  if (vkQueueSubmit(graphics_queue, 1, &submit_info, sync.in_flight_fence) !=
+      VK_SUCCESS) {
     throw std::runtime_error("failed to submit draw command buffer!");
   }
 
@@ -998,9 +1041,7 @@ void HelloTriangleApplication::drawFrame() {
 }
 
 void HelloTriangleApplication::createSyncObjects() {
-  image_available_semaphores.resize(max_frames_in_flight);
-  render_finished_semaphores.resize(max_frames_in_flight);
-  in_flight_fences.resize(max_frames_in_flight);
+  frame_sync.resize(max_frames_in_flight);
 
   VkSemaphoreCreateInfo semaphore_info = {};
   semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1010,12 +1051,13 @@ void HelloTriangleApplication::createSyncObjects() {
   fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
   for (size_t i = 0; i < max_frames_in_flight; i++) {
+    FrameSync& sync = frame_sync[i];
     if (vkCreateSemaphore(logical_device, &semaphore_info, nullptr,
-                          &image_available_semaphores[i]) != VK_SUCCESS ||
+                          &sync.image_available_semaphore) != VK_SUCCESS ||
         vkCreateSemaphore(logical_device, &semaphore_info, nullptr,
-                          &render_finished_semaphores[i]) != VK_SUCCESS ||
+                          &sync.render_finished_semaphore) != VK_SUCCESS ||
         vkCreateFence(logical_device, &fence_info, nullptr,
-                      &in_flight_fences[i]) != VK_SUCCESS) {
+                      &sync.in_flight_fence) != VK_SUCCESS) {
       throw std::runtime_error(
           "failed to create synchronization objects for a frame!");
     }
@@ -1053,9 +1095,10 @@ HelloTriangleApplication::~HelloTriangleApplication() {
   cleanupSwapChain();
 
   for (size_t i = 0; i < max_frames_in_flight; i++) {
-    vkDestroySemaphore(logical_device, render_finished_semaphores[i], nullptr);
-    vkDestroySemaphore(logical_device, image_available_semaphores[i], nullptr);
-    vkDestroyFence(logical_device, in_flight_fences[i], nullptr);
+    FrameSync& sync = frame_sync[i];
+    vkDestroySemaphore(logical_device, sync.render_finished_semaphore, nullptr);
+    vkDestroySemaphore(logical_device, sync.image_available_semaphore, nullptr);
+    vkDestroyFence(logical_device, sync.in_flight_fence, nullptr);
   }
 
   vkDestroyCommandPool(logical_device, command_pool, nullptr);
