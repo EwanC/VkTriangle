@@ -301,8 +301,12 @@ SwapChainSupportDetails querySwapChainSupport(VkSurfaceKHR surface,
 }  // namespace
 
 void HelloTriangleApplication::runMainLoop() {
+  // While windows not closed
   while (!glfwWindowShouldClose(window)) {
-    glfwPollEvents();
+    glfwPollEvents();  // check for events
+    // Acquire an image from the swap chain, execute the command buffer with
+    // that image as attachment in the framebuffer, then finally return the
+    // image to the swap chain for presentation
     drawFrame();
   }
 }
@@ -335,12 +339,15 @@ void HelloTriangleApplication::initVulkan() {
   // and which part of the image to access. Create a view for our swap chain
   createImageViews();
 
-  // TODO comment
+  // A renderpass contains the structure of the frame, encapsulating the set of
+  // framebuffer attachments.
   createRenderPass();
 
   // Load SPIR-V vertex & framgement shaders then setup graphics pipeline
   createGraphicsPipeline();
 
+  // A framebuffer object references all of the VkImageView objects that
+  // represent the renderpass attachments.
   createFramebuffers();
 
   // Command pools manage memory used to store command buffers
@@ -349,7 +356,7 @@ void HelloTriangleApplication::initVulkan() {
   // Create a command buffer for every image in swapchain
   createCommandBuffers();
 
-  // Create semaphores and fences
+  // Create semaphores and fences to synchronise frame processing
   createSyncObjects();
 }
 
@@ -695,28 +702,46 @@ void HelloTriangleApplication::createCommandBuffers() {
 }
 
 void HelloTriangleApplication::createRenderPass() {
+  // Colour attachment acts as a output buffer for framebuffer, for
+  // offscreen rendering
   VkAttachmentDescription colour_attachment = {};
   colour_attachment.format = swap_chain_image_format;
   colour_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
 
+  // The loadOp and storeOp determine what to do with the data in the attachment
+  // before rendering and after rendering.
+
+  // Clear the values to a constant at the start
   colour_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  // Rendered contents will be stored in memory and can be read later
   colour_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
+  // undefined behaviour, we  don't care about sencil
   colour_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   colour_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
+  // Don't care about previous layout of image
   colour_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  // We want the image to be ready for presentation using the swap chain after
+  // rendering
   colour_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
   VkAttachmentReference colour_attachment_ref = {};
   colour_attachment_ref.attachment = 0;
   colour_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+  // A single render pass can consist of multiple subpasses. Subpasses are
+  // subsequent rendering operations that depend on the contents of
+  // framebuffers in previous passes.
   VkSubpassDescription subpass = {};
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  // index directly referenced from the fragment shader
   subpass.colorAttachmentCount = 1;
   subpass.pColorAttachments = &colour_attachment_ref;
 
+  // Wait for the swap chain to finish reading from the image before
+  // accessing it but setting an attachment dependency
   VkSubpassDependency dependency = {};
   dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
   dependency.dstSubpass = 0;
@@ -742,15 +767,23 @@ void HelloTriangleApplication::createRenderPass() {
 }
 
 void HelloTriangleApplication::recreateSwapChain() {
+  // Window has been resized, we need to recreate the swapchain
+  // and it's dependencies so it's compatible with the new window surface
+
   int width = 0, height = 0;
   while (width == 0 || height == 0) {
+    // Window has been minimized, stall until window is maximized again
     glfwGetFramebufferSize(window, &width, &height);
     glfwWaitEvents();
   }
 
+  // Don't touch resources still in use
   vkDeviceWaitIdle(logical_device);
+
+  // Free swapchain dependent resources before allocating new ones
   cleanupSwapChain();
 
+  // Create objects again with new window size
   createSwapChain();
   createImageViews();
   createRenderPass();
@@ -978,25 +1011,32 @@ void HelloTriangleApplication::createCommandPool() {
 
 void HelloTriangleApplication::drawFrame() {
   FrameSync& sync = frame_sync[current_frame];
+
+  // Blocking wait for frame to finish presentation
   vkWaitForFences(logical_device, 1, &sync.in_flight_fence, VK_TRUE,
                   std::numeric_limits<uint64_t>::max());
 
+  // Aquire image from the swap chain, signal sempahore when ready
   uint32_t image_index;
   VkResult result = vkAcquireNextImageKHR(
-      logical_device, swap_chain, std::numeric_limits<uint64_t>::max(),
+      logical_device, swap_chain,
+      std::numeric_limits<uint64_t>::max() /* timeout */,
       sync.image_available_semaphore, VK_NULL_HANDLE, &image_index);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    // Window has been resized, swap chain no longer compatible with the surface
     recreateSwapChain();
     return;
   } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
     throw std::runtime_error("failed to acquire swap chain image!");
   }
 
+  // Submit command buffer for execution
   VkSubmitInfo submit_info = {};
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-  VkSemaphore wait_semaphores[] = {sync.image_available_semaphore};
+  // wait on image being available
+  const VkSemaphore wait_semaphores[] = {sync.image_available_semaphore};
   VkPipelineStageFlags wait_stages[] = {
       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
   submit_info.waitSemaphoreCount = 1;
@@ -1005,38 +1045,43 @@ void HelloTriangleApplication::drawFrame() {
   submit_info.commandBufferCount = 1;
   submit_info.pCommandBuffers = &command_buffers[image_index];
 
-  VkSemaphore signal_semaphores[] = {sync.render_finished_semaphore};
+  // Signal once command buffer has completed
+  const VkSemaphore signal_semaphores[] = {sync.render_finished_semaphore};
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores = signal_semaphores;
 
+  // Reset fence to unsignalled state, will be signalled once command buffer
+  // has completed execution
   vkResetFences(logical_device, 1, &sync.in_flight_fence);
+
   if (vkQueueSubmit(graphics_queue, 1, &submit_info, sync.in_flight_fence) !=
       VK_SUCCESS) {
     throw std::runtime_error("failed to submit draw command buffer!");
   }
 
+  // Wait on render completing before drawing image to screen
   VkPresentInfoKHR present_info = {};
   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-
   present_info.waitSemaphoreCount = 1;
   present_info.pWaitSemaphores = signal_semaphores;
 
   VkSwapchainKHR swap_chains[] = {swap_chain};
   present_info.swapchainCount = 1;
   present_info.pSwapchains = swap_chains;
-
   present_info.pImageIndices = &image_index;
 
+  // submit the request to present an image to the swap chain
   result = vkQueuePresentKHR(present_queue, &present_info);
-
   if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
       framebuffer_resized) {
+    // Window has been resized
     framebuffer_resized = false;
     recreateSwapChain();
   } else if (result != VK_SUCCESS) {
     throw std::runtime_error("failed to present swap chain image!");
   }
 
+  // advance frame after drawing
   current_frame = (current_frame + 1) % max_frames_in_flight;
 }
 
@@ -1046,6 +1091,7 @@ void HelloTriangleApplication::createSyncObjects() {
   VkSemaphoreCreateInfo semaphore_info = {};
   semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
+  // Create fence in signalled state, is unsignalled by default
   VkFenceCreateInfo fence_info = {};
   fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
   fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
@@ -1070,11 +1116,8 @@ void HelloTriangleApplication::createFramebuffers() {
   for (size_t i = 0; i < swap_chain_image_views.size(); i++) {
     VkImageView attachments[] = {swap_chain_image_views[i]};
 
-    // A framebuffer object references all of the VkImageView objects that
-    // represent the attachments. This depends on which image the swap chain
-    // returns when we retrieve one for presentation. So create a framebuffer
-    // for all of the images in the swap chain and use the one that corresponds
-    // to the retrieved image at drawing time.
+    // Create a framebuffer for all of the images in the swap chain and use
+    // the one that corresponds to the retrieved image at drawing time.
     VkFramebufferCreateInfo framebuffer_info = {};
     framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     framebuffer_info.renderPass = render_pass;
@@ -1092,6 +1135,10 @@ void HelloTriangleApplication::createFramebuffers() {
 }
 
 HelloTriangleApplication::~HelloTriangleApplication() {
+  // Wait on outstanding queue operations to complete before freeing resources
+  // that still may be in use
+  vkDeviceWaitIdle(logical_device);
+
   cleanupSwapChain();
 
   for (size_t i = 0; i < max_frames_in_flight; i++) {
@@ -1118,6 +1165,8 @@ HelloTriangleApplication::~HelloTriangleApplication() {
 }
 
 void HelloTriangleApplication::cleanupSwapChain() {
+  // Destroy swapchain dependent resources so we can recreate them when
+  // incompatible with window surface.
   for (auto& framebuffer : swap_chain_framebuffers) {
     vkDestroyFramebuffer(logical_device, framebuffer, nullptr);
   }

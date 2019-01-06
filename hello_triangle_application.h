@@ -72,6 +72,7 @@ class HelloTriangleApplication {
   size_t current_frame = 0;           // Used to index frame_sync
 
  public:
+  // Public since set to true by GLFW callback when window resized.
   bool framebuffer_resized = false;
 };
 #endif  // TRIANGLE_APP_CLASS_H
