@@ -27,6 +27,7 @@ class HelloTriangleApplication {
   void createGraphicsPipeline();
   void createFramebuffers();
   void createCommandPool();
+  void createVertexBuffer();
   void createCommandBuffers();
   void createSyncObjects();
 
@@ -54,6 +55,8 @@ class HelloTriangleApplication {
   VkPipeline graphics_pipeline;
   std::vector<VkFramebuffer> swap_chain_framebuffers;
   VkCommandPool command_pool;
+  VkDeviceMemory vertex_buffer_memory;
+  VkBuffer vertex_buffer;
   std::vector<VkCommandBuffer> command_buffers;
 
   // Wrap syncrhonization primitvies together

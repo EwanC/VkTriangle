@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdlib>
 #include <functional>
@@ -6,6 +7,10 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+
+#pragma warning(disable : 4201)  //  nameless struct/union
+#include <glm/glm.hpp>
+#pragma warning(default : 4201)
 
 #include "hello_triangle_application.h"
 #include "shaders.h"
@@ -298,6 +303,74 @@ SwapChainSupportDetails querySwapChainSupport(VkSurfaceKHR surface,
 
   return details;
 }
+
+// Holds data needed by vertex shader
+struct Vertex final {
+  glm::vec2 pos;
+  glm::vec3 colour;
+
+  static VkVertexInputBindingDescription getBindingDescription() {
+    // A vertex binding describes how to load data from memory throughout the
+    // vertices
+    VkVertexInputBindingDescription binding_description = {};
+    // Only have 1 binding as all data is packed into a single array
+    binding_description.binding = 0;
+    // Stride is number of bytes between 2 continugous elements in buffer
+    binding_description.stride = sizeof(Vertex);
+    // Per vertex rendering rather than instance rendering
+    binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    return binding_description;
+  }
+
+  static std::array<VkVertexInputAttributeDescription, 2>
+  getAttributeDescriptions() {
+    // attribute description desfines how to extract a vertex attribute
+    // from a chunk of vertex data originating from a binding description.
+    // We have 2 attributes, colour and position
+    std::array<VkVertexInputAttributeDescription, 2> attribute_descriptions =
+        {};
+
+    // position attribute
+    attribute_descriptions[0].binding = 0;  // we only have 1 binding
+    attribute_descriptions[0].location =
+        0;  // location 0 in shader
+            // 2-component vector of 32-bit single precision floats
+    attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attribute_descriptions[0].offset = offsetof(Vertex, pos);
+
+    // colour attribute
+    attribute_descriptions[1].binding = 0;   // we only have 1 binding
+    attribute_descriptions[1].location = 1;  // location 1 in shader
+    // 3-component vector of 32-bit single precision floats
+    attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attribute_descriptions[1].offset = offsetof(Vertex, colour);
+
+    return attribute_descriptions;
+  }
+};
+
+uint32_t findMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties,
+                        VkPhysicalDevice device) {
+  // Physical memory is defined in terms of heaps and types
+  // Memory heaps are distinct memory resources like dedicated VRAM and swap
+  // space in RAM for when VRAM runs out. The different types of memory exist
+  // within these heaps
+  VkPhysicalDeviceMemoryProperties mem_properties;
+  vkGetPhysicalDeviceMemoryProperties(device, &mem_properties);
+
+  for (uint32_t i = 0; i < mem_properties.memoryTypeCount; i++) {
+    // type_filter is bitfield of suitable memory types
+    const bool suitable_type = type_filter & (1 << i);
+    // check desired properties of memory, like writable & coherence
+    if (suitable_type && (mem_properties.memoryTypes[i].propertyFlags &
+                          properties) == properties) {
+      // Return first matching memory type
+      return i;
+    }
+  }
+
+  throw std::runtime_error("failed to find suitable memory type!");
+}
 }  // namespace
 
 void HelloTriangleApplication::runMainLoop() {
@@ -352,6 +425,9 @@ void HelloTriangleApplication::initVulkan() {
 
   // Command pools manage memory used to store command buffers
   createCommandPool();
+
+  // Create a buffer to store our vertex data
+  createVertexBuffer();
 
   // Create a command buffer for every image in swapchain
   createCommandBuffers();
@@ -628,6 +704,61 @@ void HelloTriangleApplication::createImageViews() {
   }
 }
 
+void HelloTriangleApplication::createVertexBuffer() {
+  // Colour & Position of our 3 vertices
+  const static std::vector<Vertex> vertices = {
+      {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+      {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+      {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+
+  VkBufferCreateInfo buffer_info = {};
+  buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  buffer_info.size = sizeof(Vertex) * vertices.size();
+  // Vertex buffer is the purpose
+  buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  // Only owened by graphics queue
+  buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(logical_device, &buffer_info, nullptr, &vertex_buffer) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to create vertex buffer!");
+  }
+
+  // Query memory properties of device; size, alignment, and type
+  VkMemoryRequirements mem_requirements;
+  vkGetBufferMemoryRequirements(logical_device, vertex_buffer,
+                                &mem_requirements);
+
+  // Allocate on device memory
+  VkMemoryAllocateInfo alloc_info = {};
+  alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  // required size of allocation to hold vertex buffer
+  alloc_info.allocationSize = mem_requirements.size;
+  // We want host visible memory so we can map it, and coherent so when we
+  // write data to mapped memory it's immediately visiable
+  alloc_info.memoryTypeIndex =
+      findMemoryType(mem_requirements.memoryTypeBits,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     physical_device);
+
+  if (vkAllocateMemory(logical_device, &alloc_info, nullptr,
+                       &vertex_buffer_memory) != VK_SUCCESS) {
+    throw std::runtime_error("failed to allocate vertex buffer memory!");
+  }
+
+  // Binds device memory to buffer
+  vkBindBufferMemory(logical_device, vertex_buffer, vertex_buffer_memory,
+                     0 /* offset into memory region*/);
+
+  // Map device memory to host pointer so we can copy our vertex data into it
+  void* data;
+  vkMapMemory(logical_device, vertex_buffer_memory, 0 /* offset */,
+              buffer_info.size, 0 /* flags */, &data);
+  std::memcpy(data, vertices.data(), (size_t)buffer_info.size);
+  vkUnmapMemory(logical_device, vertex_buffer_memory);
+}
+
 void HelloTriangleApplication::createCommandBuffers() {
   // Command buffer for every imagei in swapchain
   command_buffers.resize(swap_chain_framebuffers.size());
@@ -683,6 +814,12 @@ void HelloTriangleApplication::createCommandBuffers() {
 
     vkCmdBindPipeline(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                       graphics_pipeline);
+
+    // Bind vertex buffer to a command buffer
+    const VkBuffer vertex_buffers[] = {vertex_buffer};
+    const VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(command_buffers[i], 0 /* offset */, 1 /* count */,
+                           vertex_buffers, offsets);
 
     const uint32_t vertex_count = 3;  // 3 verticies to draw for triangle
     const uint32_t instance_count =
@@ -833,13 +970,19 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
   vertex_input_info.sType =
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
   // Binding defines the spacings between data
-  vertex_input_info.vertexBindingDescriptionCount = 0;
-  vertex_input_info.pVertexBindingDescriptions = nullptr;
-  // Attribute descriptions define type of the attributes passed to the vertex
-  // shader, which binding to load them from and at which offset
-  vertex_input_info.vertexAttributeDescriptionCount = 0;
-  vertex_input_info.pVertexAttributeDescriptions = nullptr;
+  const auto binding_description = Vertex::getBindingDescription();
+  vertex_input_info.vertexBindingDescriptionCount = 1;
+  vertex_input_info.pVertexBindingDescriptions = &binding_description;
+
+  // Attribute descriptions define type of the bindingDescription passed to the
+  // vertex shader, which binding to load them from and at which offset
+  const auto attribute_descriptions = Vertex::getAttributeDescriptions();
+  vertex_input_info.vertexAttributeDescriptionCount =
+      static_cast<uint32_t>(attribute_descriptions.size());
+  vertex_input_info.pVertexAttributeDescriptions =
+      attribute_descriptions.data();
 
   // Input assembler stage of graphics pipeline collects the raw vertex data
   // from the buffers. Defining what kind of geometry will be drawn from the
@@ -1140,6 +1283,9 @@ HelloTriangleApplication::~HelloTriangleApplication() {
   vkDeviceWaitIdle(logical_device);
 
   cleanupSwapChain();
+
+  vkDestroyBuffer(logical_device, vertex_buffer, nullptr /* allocator */);
+  vkFreeMemory(logical_device, vertex_buffer_memory, nullptr);
 
   for (size_t i = 0; i < max_frames_in_flight; i++) {
     FrameSync& sync = frame_sync[i];
