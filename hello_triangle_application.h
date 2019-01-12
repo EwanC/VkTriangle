@@ -27,6 +27,7 @@ class HelloTriangleApplication {
   void createGraphicsPipeline();
   void createFramebuffers();
   void createCommandPool();
+  void copyBuffer(VkBuffer, VkBuffer, VkDeviceSize);
   void createVertexBuffer();
   void createCommandBuffers();
   void createSyncObjects();
