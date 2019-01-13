@@ -410,6 +410,18 @@ void createBuffer(VkDevice logical_device, VkPhysicalDevice physical_device,
   vkBindBufferMemory(logical_device, buffer, buffer_memory,
                      0 /* offset into memory region*/);
 }
+
+// Colour & Position of our rectangles vertices
+const std::vector<Vertex> vertices = {
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  // Top-left red
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},   // Top-right green
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},    // Bottom-right blue
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}    // Bottom-right white
+};
+
+// Indicies into vertex buffer of 2 triangles used to make
+// rectangle, rather than redunancy in vertex buffer.
+const std::vector<uint16_t> vertex_indices = {0, 1, 2, 2, 3, 0};
 }  // namespace
 
 void HelloTriangleApplication::runMainLoop() {
@@ -467,6 +479,9 @@ void HelloTriangleApplication::initVulkan() {
 
   // Create a buffer to store our vertex data
   createVertexBuffer();
+
+  // Create buffer storing indicies into vertex buffer
+  createIndexBuffer();
 
   // Create a command buffer for every image in swapchain
   createCommandBuffers();
@@ -567,8 +582,8 @@ void HelloTriangleApplication::pickPhysicalDevice() {
     }
 
     // Check supports queue families with all the functionality we need
-    const QueueFamilyIndices indices = findQueueFamilies(surface, dev);
-    if (!indices.isComplete()) {
+    const QueueFamilyIndices q_indices = findQueueFamilies(surface, dev);
+    if (!q_indices.isComplete()) {
       continue;
     }
 
@@ -787,12 +802,44 @@ void HelloTriangleApplication::copyBuffer(VkBuffer src_buffer,
   vkFreeCommandBuffers(logical_device, command_pool, 1, &command_buffer);
 }
 
+void HelloTriangleApplication::createIndexBuffer() {
+  const VkDeviceSize buffer_size =
+      sizeof(vertex_indices[0]) * vertex_indices.size();
+
+  // Staging buffer from cpu accessible memory to local
+  VkBuffer staging_buffer;
+  VkDeviceMemory staging_buffer_memory;
+
+  // Our staging buffer needs host visible memory that will be immediately
+  // visible to device when written to
+  VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  createBuffer(logical_device, physical_device, buffer_size, usage, properties,
+               staging_buffer, staging_buffer_memory);
+
+  // Map staging buffer and copy the indicies data into it we want in our
+  // index buffer
+  void* data;
+  vkMapMemory(logical_device, staging_buffer_memory, 0, buffer_size, 0, &data);
+  std::memcpy(data, vertex_indices.data(), (size_t)buffer_size);
+  vkUnmapMemory(logical_device, staging_buffer_memory);
+
+  // Index buffer should be on device memory used for indexing.
+  usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+  properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  createBuffer(logical_device, physical_device, buffer_size, usage, properties,
+               index_buffer, index_buffer_memory);
+
+  // Copy staging buffer data to index buffer
+  copyBuffer(staging_buffer, index_buffer, buffer_size);
+
+  // Free our staging buffer now data has been copied to device
+  vkDestroyBuffer(logical_device, staging_buffer, nullptr);
+  vkFreeMemory(logical_device, staging_buffer_memory, nullptr);
+}
+
 void HelloTriangleApplication::createVertexBuffer() {
-  // Colour & Position of our 3 vertices
-  const static std::vector<Vertex> vertices = {
-      {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-      {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-      {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
   const VkDeviceSize buffer_size = sizeof(Vertex) * vertices.size();
 
   // Use a staging buffer in CPU accessible memory to upload the data from the
@@ -813,7 +860,7 @@ void HelloTriangleApplication::createVertexBuffer() {
   // Map device memory to host pointer so we can copy our vertex data into it
   void* data;
   vkMapMemory(logical_device, staging_buffer_memory, 0 /* offset */,
-	          buffer_size, 0 /* flags */, &data);
+              buffer_size, 0 /* flags */, &data);
   std::memcpy(data, vertices.data(), (size_t)buffer_size);
   vkUnmapMemory(logical_device, staging_buffer_memory);
 
@@ -833,7 +880,7 @@ void HelloTriangleApplication::createVertexBuffer() {
 }
 
 void HelloTriangleApplication::createCommandBuffers() {
-  // Command buffer for every imagei in swapchain
+  // Command buffer for every image in swapchain
   command_buffers.resize(swap_chain_framebuffers.size());
 
   VkCommandBufferAllocateInfo alloc_info = {};
@@ -894,15 +941,19 @@ void HelloTriangleApplication::createCommandBuffers() {
     vkCmdBindVertexBuffers(command_buffers[i], 0 /* offset */, 1 /* count */,
                            vertex_buffers, offsets);
 
-    const uint32_t vertex_count = 3;  // 3 verticies to draw for triangle
+    // Bind 16-bit index buffer, indices can be 16 or 32-bit
+    vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0,
+                         VK_INDEX_TYPE_UINT16);
+
+    const uint32_t index_count = static_cast<uint32_t>(vertex_indices.size());
     const uint32_t instance_count =
         1;  // 1 since we're not doing instance rendering
-    const uint32_t first_vertex = 0;    // offset into vertex buffer
+    const uint32_t first_indice = 0;    // offset into vertex buffer
     const uint32_t first_instance = 0;  // offset into instance rendering
+    const int32_t vertex_offset = 0;  // Value added before indexing into buffer
 
-    vkCmdDraw(command_buffers[i], vertex_count, instance_count, first_vertex,
-              first_instance);
-
+    vkCmdDrawIndexed(command_buffers[i], index_count, instance_count,
+                     first_indice, vertex_offset, first_indice);
     vkCmdEndRenderPass(command_buffers[i]);
 
     if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS) {
@@ -1357,7 +1408,10 @@ HelloTriangleApplication::~HelloTriangleApplication() {
 
   cleanupSwapChain();
 
-  vkDestroyBuffer(logical_device, vertex_buffer, nullptr /* allocator */);
+  vkDestroyBuffer(logical_device, index_buffer, nullptr /* allocator */);
+  vkFreeMemory(logical_device, index_buffer_memory, nullptr);
+
+  vkDestroyBuffer(logical_device, vertex_buffer, nullptr);
   vkFreeMemory(logical_device, vertex_buffer_memory, nullptr);
 
   for (size_t i = 0; i < max_frames_in_flight; i++) {

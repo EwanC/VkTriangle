@@ -29,6 +29,7 @@ class HelloTriangleApplication {
   void createCommandPool();
   void copyBuffer(VkBuffer, VkBuffer, VkDeviceSize);
   void createVertexBuffer();
+  void createIndexBuffer();
   void createCommandBuffers();
   void createSyncObjects();
 
@@ -57,7 +58,9 @@ class HelloTriangleApplication {
   std::vector<VkFramebuffer> swap_chain_framebuffers;
   VkCommandPool command_pool;
   VkDeviceMemory vertex_buffer_memory;
+  VkDeviceMemory index_buffer_memory;
   VkBuffer vertex_buffer;
+  VkBuffer index_buffer;
   std::vector<VkCommandBuffer> command_buffers;
 
   // Wrap syncrhonization primitvies together
