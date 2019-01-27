@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -8,9 +9,12 @@
 #include <set>
 #include <stdexcept>
 
-#pragma warning(disable : 4201)  //  nameless struct/union
+#pragma warning(disable : 4201)  // nameless struct/union
 #include <glm/glm.hpp>
 #pragma warning(default : 4201)
+#pragma warning(disable : 4127)  // consider constexpr
+#include <glm/gtc/matrix_transform.hpp>
+#pragma warning(default : 4127)
 
 #include "hello_triangle_application.h"
 #include "shaders.h"
@@ -411,6 +415,60 @@ void createBuffer(VkDevice logical_device, VkPhysicalDevice physical_device,
                      0 /* offset into memory region*/);
 }
 
+// Needs to match struct in vertex shader source
+struct UniformBufferObject final {
+  glm::mat4 model;  // Model in world space relative to origin
+  glm::mat4 view;   // Camera view, rotation around origin
+  glm::mat4 proj;   // Project to screen, so 3D model can be rendered in 2D
+};
+
+void updateUniformBuffer(VkDevice device, VkDeviceMemory ubo_image,
+                         VkExtent2D swap_chain_extent) {
+  // Rotate geometry 90 degrees per second regardless of frame rate
+  static auto start_time = std::chrono::high_resolution_clock::now();
+  const auto current_time = std::chrono::high_resolution_clock::now();
+  const float time = std::chrono::duration<float, std::chrono::seconds::period>(
+                         current_time - start_time)
+                         .count();
+
+  UniformBufferObject ubo = {};
+
+  // Model to world
+  const glm::f32 model_angle = time * glm::radians(90.0f);   // 90 degrees
+  const glm::vec3 model_axis = glm::vec3(0.0f, 0.0f, 1.0f);  // Z rotation axis
+  ubo.model = glm::rotate(glm::mat4(1.0f), model_angle, model_axis);
+
+  // Position of camera's viewpoint
+  const glm::vec3 view_eye = glm::vec3(2.0f, 2.0f, 2.0f);
+  // Center is where you are looking at, the origin
+  const glm::vec3 view_center = glm::vec3(0.0f, 0.0f, 0.0f);
+  // Defines worlds upwards direction towards positive
+  const glm::vec3 view_up = glm::vec3(0.0f, 0.0f, 1.0f);
+  // View from camera space
+  ubo.view = glm::lookAt(view_eye, view_center, view_up);
+
+  // 45 degree field of view
+  const float proj_fov = glm::radians(45.0f);
+  // Aspect ratio should match window size
+  const float proj_aspect_ratio = static_cast<float>(swap_chain_extent.width) /
+                                  static_cast<float>(swap_chain_extent.height);
+  // Near and far clip distance thresholds
+  const float proj_near = 0.1f;
+  const float proj_far = 10.0f;
+  // Create projection matrix from 3D to 2D
+  ubo.proj = glm::perspective(proj_fov, proj_aspect_ratio, proj_near, proj_far);
+
+  // In OpenGL the Y coordinate of the clip coordinates is inverted, Flip the
+  // sign on the scaling factor of the Y axis to compensate
+  ubo.proj[1][1] *= -1;
+
+  // Copy data MVP matricies to uniform buffer so it's available to the device
+  void* data;
+  vkMapMemory(device, ubo_image, 0, sizeof(ubo), 0, &data);
+  std::memcpy(data, &ubo, sizeof(ubo));
+  vkUnmapMemory(device, ubo_image);
+}
+
 // Colour & Position of our rectangles vertices
 const std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  // Top-left red
@@ -467,6 +525,11 @@ void HelloTriangleApplication::initVulkan() {
   // framebuffer attachments.
   createRenderPass();
 
+  // We use Uniform Buffer descriptors in our vertex shader, initalize the
+  // description set layout so we can pass it to the pipeline layout step of
+  // graphics pipeline creation.
+  createDescriptorSetLayout();
+
   // Load SPIR-V vertex & framgement shaders then setup graphics pipeline
   createGraphicsPipeline();
 
@@ -482,6 +545,10 @@ void HelloTriangleApplication::initVulkan() {
 
   // Create buffer storing indicies into vertex buffer
   createIndexBuffer();
+
+  // Create uniform buffer per swap chain image which our vertex shader reads
+  // MVP matricies from.
+  createUniformBuffers();
 
   // Create a command buffer for every image in swapchain
   createCommandBuffers();
@@ -839,6 +906,26 @@ void HelloTriangleApplication::createIndexBuffer() {
   vkFreeMemory(logical_device, staging_buffer_memory, nullptr);
 }
 
+void HelloTriangleApplication::createUniformBuffers() {
+  const VkDeviceSize buffer_size = sizeof(UniformBufferObject);
+
+  // We want a uniform buffer per swap chain image because multiple frames may
+  // be in flight at the same time
+  const size_t swap_chain_len = swap_chain_images.size();
+  uniform_buffers.resize(swap_chain_len);
+  uniform_buffers_memory.resize(swap_chain_len);
+
+  // We're not using a staging buffer so use host visible memory that will be
+  // immediately visible to device when written to
+  const VkBufferUsageFlags usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+  const VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  for (size_t i = 0; i < swap_chain_len; i++) {
+    createBuffer(logical_device, physical_device, buffer_size, usage,
+                 properties, uniform_buffers[i], uniform_buffers_memory[i]);
+  }
+}
+
 void HelloTriangleApplication::createVertexBuffer() {
   const VkDeviceSize buffer_size = sizeof(Vertex) * vertices.size();
 
@@ -1053,6 +1140,27 @@ void HelloTriangleApplication::recreateSwapChain() {
   createCommandBuffers();
 }
 
+void HelloTriangleApplication::createDescriptorSetLayout() {
+  // We want a single unform buffer for our vertex shader
+  VkDescriptorSetLayoutBinding ubo_layout_binding = {};
+  ubo_layout_binding.binding = 0;
+  ubo_layout_binding.descriptorCount = 1;
+  ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  ubo_layout_binding.pImmutableSamplers = nullptr;
+  ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+  VkDescriptorSetLayoutCreateInfo layout_info = {};
+  layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layout_info.bindingCount = 1;
+  layout_info.pBindings = &ubo_layout_binding;
+
+  // Initalize descriptor_set_layout used in graphics pipeline creation
+  if (vkCreateDescriptorSetLayout(logical_device, &layout_info, nullptr,
+                                  &descriptor_set_layout) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create descriptor set layout!");
+  }
+}
+
 void HelloTriangleApplication::createGraphicsPipeline() {
   // SPIR-V vertex shader buffer
   const std::vector<uint8_t> vert_shader_code(
@@ -1212,13 +1320,15 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   dynamic_state.dynamicStateCount = 2;
   dynamic_state.pDynamicStates = dynamic_states;
 
-  // Pipeline layouts allow setting of unfiorm values that can be changed at
+  // Pipeline layouts allow setting of uniform values that can be changed at
   // drawing time to alter the behavior of your shaders without having to
   // recreate them
   VkPipelineLayoutCreateInfo pipeline_layout_info = {};
   pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipeline_layout_info.setLayoutCount = 0;
-  pipeline_layout_info.pSetLayouts = nullptr;
+
+  // Unfiorm buffer vertex shader layout
+  pipeline_layout_info.setLayoutCount = 1;
+  pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
   pipeline_layout_info.pushConstantRangeCount = 0;
   pipeline_layout_info.pPushConstantRanges = nullptr;
 
@@ -1297,6 +1407,10 @@ void HelloTriangleApplication::drawFrame() {
   } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
     throw std::runtime_error("failed to acquire swap chain image!");
   }
+
+  // Generate transformation matrix for image to rotate geometry
+  updateUniformBuffer(logical_device, uniform_buffers_memory[image_index],
+                      swap_chain_extent);
 
   // Submit command buffer for execution
   VkSubmitInfo submit_info = {};
@@ -1407,6 +1521,13 @@ HelloTriangleApplication::~HelloTriangleApplication() {
   vkDeviceWaitIdle(logical_device);
 
   cleanupSwapChain();
+
+  vkDestroyDescriptorSetLayout(logical_device, descriptor_set_layout, nullptr);
+
+  for (size_t i = 0; i < swap_chain_images.size(); i++) {
+    vkDestroyBuffer(logical_device, uniform_buffers[i], nullptr);
+    vkFreeMemory(logical_device, uniform_buffers_memory[i], nullptr);
+  }
 
   vkDestroyBuffer(logical_device, index_buffer, nullptr /* allocator */);
   vkFreeMemory(logical_device, index_buffer_memory, nullptr);

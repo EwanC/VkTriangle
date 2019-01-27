@@ -24,12 +24,14 @@ class HelloTriangleApplication {
 
   void createImageViews();
   void createRenderPass();
+  void createDescriptorSetLayout();
   void createGraphicsPipeline();
   void createFramebuffers();
   void createCommandPool();
   void copyBuffer(VkBuffer, VkBuffer, VkDeviceSize);
   void createVertexBuffer();
   void createIndexBuffer();
+  void createUniformBuffers();
   void createCommandBuffers();
   void createSyncObjects();
 
@@ -53,6 +55,7 @@ class HelloTriangleApplication {
   std::vector<VkImageView> swap_chain_image_views;  // Swapchain view
 
   VkRenderPass render_pass;
+  VkDescriptorSetLayout descriptor_set_layout;
   VkPipelineLayout pipeline_layout;
   VkPipeline graphics_pipeline;
   std::vector<VkFramebuffer> swap_chain_framebuffers;
@@ -62,6 +65,9 @@ class HelloTriangleApplication {
   VkBuffer vertex_buffer;
   VkBuffer index_buffer;
   std::vector<VkCommandBuffer> command_buffers;
+
+  std::vector<VkBuffer> uniform_buffers;
+  std::vector<VkDeviceMemory> uniform_buffers_memory;
 
   // Wrap syncrhonization primitvies together
   struct FrameSync final {
