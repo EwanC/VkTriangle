@@ -417,9 +417,10 @@ void createBuffer(VkDevice logical_device, VkPhysicalDevice physical_device,
 
 // Needs to match struct in vertex shader source
 struct UniformBufferObject final {
-  glm::mat4 model;  // Model in world space relative to origin
-  glm::mat4 view;   // Camera view, rotation around origin
-  glm::mat4 proj;   // Project to screen, so 3D model can be rendered in 2D
+  alignas(16) glm::mat4 model;  // Model in world space relative to origin
+  alignas(16) glm::mat4 view;   // Camera view, rotation around origin
+  alignas(16)
+      glm::mat4 proj;  // Project to screen, so 3D model can be rendered in 2D
 };
 
 void updateUniformBuffer(VkDevice device, VkDeviceMemory ubo_image,
@@ -549,6 +550,11 @@ void HelloTriangleApplication::initVulkan() {
   // Create uniform buffer per swap chain image which our vertex shader reads
   // MVP matricies from.
   createUniformBuffers();
+
+  // Create pool to allocate descriptor sets from, then allocate the sets
+  // themselves
+  createDescriptorPool();
+  createDescriptorSets();
 
   // Create a command buffer for every image in swapchain
   createCommandBuffers();
@@ -926,6 +932,62 @@ void HelloTriangleApplication::createUniformBuffers() {
   }
 }
 
+void HelloTriangleApplication::createDescriptorPool() {
+  // We'll allocate a descriptor for every frame
+  VkDescriptorPoolSize pool_size = {};
+  pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  pool_size.descriptorCount = static_cast<uint32_t>(swap_chain_images.size());
+
+  VkDescriptorPoolCreateInfo pool_info = {};
+  pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes = &pool_size;
+  pool_info.maxSets = static_cast<uint32_t>(swap_chain_images.size());
+
+  if (vkCreateDescriptorPool(logical_device, &pool_info, nullptr, &descriptor_pool) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to create descriptor pool!");
+  }
+}
+
+ void HelloTriangleApplication::createDescriptorSets() {
+  // create one descriptor set for each swap chain image, all with the same layout.
+  const size_t swap_chain_len = swap_chain_images.size();
+  std::vector<VkDescriptorSetLayout> layouts(swap_chain_len,
+                                             descriptor_set_layout);
+  VkDescriptorSetAllocateInfo alloc_info = {};
+  alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  alloc_info.descriptorPool = descriptor_pool;
+  alloc_info.descriptorSetCount = static_cast<uint32_t>(swap_chain_len);
+  alloc_info.pSetLayouts = layouts.data();
+
+  descriptor_sets.resize(swap_chain_len);
+  if (vkAllocateDescriptorSets(logical_device, &alloc_info,
+                               descriptor_sets.data()) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to allocate descriptor sets!");
+  }
+
+  // Configure descriptors now they've been allocated
+  for (size_t i = 0; i < swap_chain_len; i++) {
+    VkDescriptorBufferInfo buffer_info = {};
+    buffer_info.buffer = uniform_buffers[i]; // describes our uniform buffers
+    buffer_info.offset = 0;
+    buffer_info.range = sizeof(UniformBufferObject);
+
+    VkWriteDescriptorSet descriptor_write = {};
+    descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptor_write.dstSet = descriptor_sets[i];
+    descriptor_write.dstBinding = 0;  // binding index from shader
+    descriptor_write.dstArrayElement = 0;
+    descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptor_write.descriptorCount = 1;
+    descriptor_write.pBufferInfo = &buffer_info;
+
+    vkUpdateDescriptorSets(logical_device, 1, &descriptor_write, 0, nullptr);
+  }
+}
+
 void HelloTriangleApplication::createVertexBuffer() {
   const VkDeviceSize buffer_size = sizeof(Vertex) * vertices.size();
 
@@ -1031,6 +1093,13 @@ void HelloTriangleApplication::createCommandBuffers() {
     // Bind 16-bit index buffer, indices can be 16 or 32-bit
     vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0,
                          VK_INDEX_TYPE_UINT16);
+
+	// Descriptor sets can be used for compute or graphics pipelines
+    const VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    // Bind the right descriptor set for each swap chain image
+    vkCmdBindDescriptorSets(command_buffers[i], bind_point,
+                            pipeline_layout, 0, 1, &descriptor_sets[i], 0,
+                            nullptr);
 
     const uint32_t index_count = static_cast<uint32_t>(vertex_indices.size());
     const uint32_t instance_count =
@@ -1259,7 +1328,8 @@ void HelloTriangleApplication::createGraphicsPipeline() {
   rasterizer.rasterizerDiscardEnable = VK_FALSE;
   rasterizer.lineWidth = 1.0f;
   rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  // Counter-clockwise because we Y-Axis flipped in the projection matrix
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
   rasterizer.depthBiasEnable = VK_FALSE;
   rasterizer.depthBiasConstantFactor = 0.0f;
   rasterizer.depthBiasClamp = 0.0f;
@@ -1522,6 +1592,8 @@ HelloTriangleApplication::~HelloTriangleApplication() {
 
   cleanupSwapChain();
 
+  vkDestroyDescriptorPool(logical_device, descriptor_pool, nullptr /* allocator */);
+
   vkDestroyDescriptorSetLayout(logical_device, descriptor_set_layout, nullptr);
 
   for (size_t i = 0; i < swap_chain_images.size(); i++) {
@@ -1529,7 +1601,7 @@ HelloTriangleApplication::~HelloTriangleApplication() {
     vkFreeMemory(logical_device, uniform_buffers_memory[i], nullptr);
   }
 
-  vkDestroyBuffer(logical_device, index_buffer, nullptr /* allocator */);
+  vkDestroyBuffer(logical_device, index_buffer, nullptr);
   vkFreeMemory(logical_device, index_buffer_memory, nullptr);
 
   vkDestroyBuffer(logical_device, vertex_buffer, nullptr);

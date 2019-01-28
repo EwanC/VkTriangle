@@ -32,6 +32,8 @@ class HelloTriangleApplication {
   void createVertexBuffer();
   void createIndexBuffer();
   void createUniformBuffers();
+  void createDescriptorPool();
+  void createDescriptorSets();
   void createCommandBuffers();
   void createSyncObjects();
 
@@ -60,6 +62,9 @@ class HelloTriangleApplication {
   VkPipeline graphics_pipeline;
   std::vector<VkFramebuffer> swap_chain_framebuffers;
   VkCommandPool command_pool;
+  VkDescriptorPool descriptor_pool;
+  std::vector<VkDescriptorSet> descriptor_sets;
+
   VkDeviceMemory vertex_buffer_memory;
   VkDeviceMemory index_buffer_memory;
   VkBuffer vertex_buffer;
