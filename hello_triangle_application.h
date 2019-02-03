@@ -28,6 +28,7 @@ class HelloTriangleApplication {
   void createGraphicsPipeline();
   void createFramebuffers();
   void createCommandPool();
+  void createTextureImage();
   void copyBuffer(VkBuffer, VkBuffer, VkDeviceSize);
   void createVertexBuffer();
   void createIndexBuffer();
@@ -69,6 +70,8 @@ class HelloTriangleApplication {
   VkDeviceMemory index_buffer_memory;
   VkBuffer vertex_buffer;
   VkBuffer index_buffer;
+  VkImage texture_image;
+  VkDeviceMemory texture_image_memory;
   std::vector<VkCommandBuffer> command_buffers;
 
   std::vector<VkBuffer> uniform_buffers;

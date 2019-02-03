@@ -47,6 +47,12 @@ endif()
 include_directories("${GLFW_INSTALL}\\include")
 find_library(GLFW_LIB NAMES "glfw3" PATHS "${GLFW_INSTALL}\\lib-vc2015")
 
+SET(STB_INSTALL "" CACHE PATH "Path to stb install directoy")
+if (NOT EXISTS ${STB_INSTALL})
+  message(FATAL_ERROR "Could find stb install at ${STB_INSTALL}")
+endif()
+include_directories("${STB_INSTALL}")
+
 set(ENABLE_VALIDATION_LAYERS ON CACHE BOOL "Build with Vulkan validation layers")
 if (ENABLE_VALIDATION_LAYERS)
   add_compile_definitions("ENABLE_VALIDATION")

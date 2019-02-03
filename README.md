@@ -13,6 +13,7 @@ Author: Ewan Crawford <ewan.cr@gmail.com>
 * [GLFW](https://www.glfw.org/download.html)
 * [GLM](https://glm.g-truc.net/0.9.9/index.html)
 * [CMake 3.13.2](https://cmake.org/download/)
+* [STB](https://github.com/nothings/stb)
 
 ## License
 

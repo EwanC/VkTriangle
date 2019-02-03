@@ -16,6 +16,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #pragma warning(default : 4127)
 
+#define STB_IMAGE_IMPLEMENTATION
+#pragma warning(disable : 4100)  // unreferenced formal parameter
+#include <stb_image.h>
+#pragma warning(default : 4100)
+
 #include "hello_triangle_application.h"
 #include "shaders.h"
 
@@ -470,6 +475,57 @@ void updateUniformBuffer(VkDevice device, VkDeviceMemory ubo_image,
   vkUnmapMemory(device, ubo_image);
 }
 
+void createImage(VkDevice device, VkPhysicalDevice physical_device,
+                 uint32_t width, uint32_t height, VkFormat format,
+                 VkImageTiling tiling, VkImageUsageFlags usage,
+                 VkMemoryPropertyFlags properties, VkImage& image,
+                 VkDeviceMemory& image_memory) {
+  VkImageCreateInfo image_info = {};
+  image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  // 1D could be used for gradients, or 3D for Voxels, but 2D works for texture
+  image_info.imageType = VK_IMAGE_TYPE_2D;
+  // Extent described dimenions as texels per axis
+  image_info.extent.width = width;
+  image_info.extent.height = height;
+  image_info.extent.depth = 1;
+  image_info.mipLevels = 1;
+  image_info.arrayLayers = 1;
+  image_info.format = format;
+  image_info.tiling = tiling;
+  // First transition will discard texels, okay since we're first going to
+  // transition the image to be a transfer destination and then copy texel
+  // data to it from a buffer object
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  image_info.usage = usage;
+  // Only 11 sample since we're not mutlisampling
+  image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  // Image only used by our graphics queue family
+  image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateImage(device, &image_info, nullptr, &image) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create image!");
+  }
+
+  // Query image for device specific memory requirements
+  VkMemoryRequirements mem_requirements;
+  vkGetImageMemoryRequirements(device, image, &mem_requirements);
+
+  // Allocate device memory for image
+  VkMemoryAllocateInfo alloc_info = {};
+  alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  alloc_info.allocationSize = mem_requirements.size;
+  alloc_info.memoryTypeIndex = findMemoryType(mem_requirements.memoryTypeBits,
+                                              properties, physical_device);
+  // Allocate device memory
+  if (vkAllocateMemory(device, &alloc_info, nullptr, &image_memory) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to allocate image memory!");
+  }
+
+  // Bind device memory to image object
+  vkBindImageMemory(device, image, image_memory, 0);
+}
+
 // Colour & Position of our rectangles vertices
 const std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  // Top-left red
@@ -540,6 +596,9 @@ void HelloTriangleApplication::initVulkan() {
 
   // Command pools manage memory used to store command buffers
   createCommandPool();
+
+  // Loads an to use as a textire and turns it into a Vulkan image object.
+  createTextureImage();
 
   // Create a buffer to store our vertex data
   createVertexBuffer();
@@ -944,14 +1003,15 @@ void HelloTriangleApplication::createDescriptorPool() {
   pool_info.pPoolSizes = &pool_size;
   pool_info.maxSets = static_cast<uint32_t>(swap_chain_images.size());
 
-  if (vkCreateDescriptorPool(logical_device, &pool_info, nullptr, &descriptor_pool) !=
-      VK_SUCCESS) {
+  if (vkCreateDescriptorPool(logical_device, &pool_info, nullptr,
+                             &descriptor_pool) != VK_SUCCESS) {
     throw std::runtime_error("failed to create descriptor pool!");
   }
 }
 
- void HelloTriangleApplication::createDescriptorSets() {
-  // create one descriptor set for each swap chain image, all with the same layout.
+void HelloTriangleApplication::createDescriptorSets() {
+  // create one descriptor set for each swap chain image, all with the same
+  // layout.
   const size_t swap_chain_len = swap_chain_images.size();
   std::vector<VkDescriptorSetLayout> layouts(swap_chain_len,
                                              descriptor_set_layout);
@@ -963,15 +1023,14 @@ void HelloTriangleApplication::createDescriptorPool() {
 
   descriptor_sets.resize(swap_chain_len);
   if (vkAllocateDescriptorSets(logical_device, &alloc_info,
-                               descriptor_sets.data()) !=
-      VK_SUCCESS) {
+                               descriptor_sets.data()) != VK_SUCCESS) {
     throw std::runtime_error("failed to allocate descriptor sets!");
   }
 
   // Configure descriptors now they've been allocated
   for (size_t i = 0; i < swap_chain_len; i++) {
     VkDescriptorBufferInfo buffer_info = {};
-    buffer_info.buffer = uniform_buffers[i]; // describes our uniform buffers
+    buffer_info.buffer = uniform_buffers[i];  // describes our uniform buffers
     buffer_info.offset = 0;
     buffer_info.range = sizeof(UniformBufferObject);
 
@@ -1094,12 +1153,11 @@ void HelloTriangleApplication::createCommandBuffers() {
     vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0,
                          VK_INDEX_TYPE_UINT16);
 
-	// Descriptor sets can be used for compute or graphics pipelines
+    // Descriptor sets can be used for compute or graphics pipelines
     const VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
     // Bind the right descriptor set for each swap chain image
-    vkCmdBindDescriptorSets(command_buffers[i], bind_point,
-                            pipeline_layout, 0, 1, &descriptor_sets[i], 0,
-                            nullptr);
+    vkCmdBindDescriptorSets(command_buffers[i], bind_point, pipeline_layout, 0,
+                            1, &descriptor_sets[i], 0, nullptr);
 
     const uint32_t index_count = static_cast<uint32_t>(vertex_indices.size());
     const uint32_t instance_count =
@@ -1456,6 +1514,56 @@ void HelloTriangleApplication::createCommandPool() {
   }
 }
 
+void HelloTriangleApplication::createTextureImage() {
+  int tex_width, tex_height, tex_channels;
+
+  // STBI_rgb_alpha value forces the image to be loaded with an alpha channel,
+  // even if it doesn't have one. Return value is first element in pixel array
+  stbi_uc* pixels = stbi_load("textures/texture.jpg", &tex_width, &tex_height,
+                              &tex_channels, STBI_rgb_alpha);
+
+  // 4 bytes per pixel for 'STBI_rgba_alpha'
+  const VkDeviceSize image_size = tex_width * tex_height * 4;
+  if (!pixels) {
+    return; // TODO don't hardcode texure path
+    //throw std::runtime_error("failed to load texture image!");
+  }
+
+  // Create host visible buffer to copy image pixel data to
+  VkBuffer staging_buffer;
+  VkDeviceMemory staging_buffer_memory;
+  VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  createBuffer(logical_device, physical_device, image_size, usage, properties,
+               staging_buffer, staging_buffer_memory);
+
+  void* data;
+  vkMapMemory(logical_device, staging_buffer_memory, 0, image_size, 0, &data);
+  std::memcpy(data, pixels, static_cast<size_t>(image_size));
+  vkUnmapMemory(logical_device, staging_buffer_memory);
+
+  // Free pixel data now it's in a buffer
+  stbi_image_free(pixels);
+
+  // Same format for the texels as the pixels in the buffer,
+  const VkFormat image_format = VK_FORMAT_R8G8B8A8_UNORM;
+  // Texels are laid out in an implementation defined order for optimal access
+  const VkImageTiling image_tiling = VK_IMAGE_TILING_OPTIMAL;
+
+  // Sampled bit so we can access image from shader
+  usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  // Allocate image on fast device side memory
+  properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  createImage(logical_device, physical_device, tex_width, tex_height,
+              image_format, image_tiling, usage, properties, texture_image,
+              texture_image_memory);
+
+  // Cleanup staging buffers since data lives in image object
+  vkDestroyBuffer(logical_device, staging_buffer, nullptr);
+  vkFreeMemory(logical_device, staging_buffer_memory, nullptr);
+}
+
 void HelloTriangleApplication::drawFrame() {
   FrameSync& sync = frame_sync[current_frame];
 
@@ -1592,7 +1700,11 @@ HelloTriangleApplication::~HelloTriangleApplication() {
 
   cleanupSwapChain();
 
-  vkDestroyDescriptorPool(logical_device, descriptor_pool, nullptr /* allocator */);
+  vkDestroyImage(logical_device, texture_image, nullptr);
+  vkFreeMemory(logical_device, texture_image_memory, nullptr);
+
+  vkDestroyDescriptorPool(logical_device, descriptor_pool,
+                          nullptr /* allocator */);
 
   vkDestroyDescriptorSetLayout(logical_device, descriptor_set_layout, nullptr);
 
