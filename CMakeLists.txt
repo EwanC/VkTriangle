@@ -58,6 +58,9 @@ if (ENABLE_VALIDATION_LAYERS)
   add_compile_definitions("ENABLE_VALIDATION")
 endif()
 
+set(TEXTURE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/textures/statue.jpg")
+add_compile_definitions(STATUE_TEXTURE=\"${TEXTURE_PATH}\")
+
 #Compile shaders to SPIRV-v at configure time
 execute_process(COMMAND compile_shaders.bat WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -1519,15 +1519,15 @@ void HelloTriangleApplication::createTextureImage() {
 
   // STBI_rgb_alpha value forces the image to be loaded with an alpha channel,
   // even if it doesn't have one. Return value is first element in pixel array
-  stbi_uc* pixels = stbi_load("textures/texture.jpg", &tex_width, &tex_height,
+  stbi_uc* pixels = stbi_load(STATUE_TEXTURE, &tex_width, &tex_height,
                               &tex_channels, STBI_rgb_alpha);
+
+  if (!pixels) {
+    throw std::runtime_error("failed to load texture image!");
+  }
 
   // 4 bytes per pixel for 'STBI_rgba_alpha'
   const VkDeviceSize image_size = tex_width * tex_height * 4;
-  if (!pixels) {
-    return; // TODO don't hardcode texure path
-    //throw std::runtime_error("failed to load texture image!");
-  }
 
   // Create host visible buffer to copy image pixel data to
   VkBuffer staging_buffer;
