@@ -30,6 +30,8 @@ class HelloTriangleApplication {
   void createCommandPool();
   void createTextureImage();
   void copyBuffer(VkBuffer, VkBuffer, VkDeviceSize);
+  void transitionImageLayout(VkImage, VkFormat, VkImageLayout, VkImageLayout);
+  void copyBufferToImage(VkBuffer, VkImage, uint32_t, uint32_t);
   void createVertexBuffer();
   void createIndexBuffer();
   void createUniformBuffers();

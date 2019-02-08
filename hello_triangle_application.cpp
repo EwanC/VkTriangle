@@ -381,6 +381,49 @@ uint32_t findMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties,
   throw std::runtime_error("failed to find suitable memory type!");
 }
 
+VkCommandBuffer beginSingleTimeCommands(VkDevice logical_device,
+                                        VkCommandPool command_pool) {
+  // Allocate command buffer to submit
+  VkCommandBufferAllocateInfo alloc_info = {};
+  alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  alloc_info.commandPool = command_pool;
+  alloc_info.commandBufferCount = 1;  // Single
+
+  VkCommandBuffer command_buffer;
+  vkAllocateCommandBuffers(logical_device, &alloc_info, &command_buffer);
+
+  // Only submitted once
+  VkCommandBufferBeginInfo begin_info = {};
+  begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  // start recording
+  vkBeginCommandBuffer(command_buffer, &begin_info);
+  return command_buffer;
+}
+
+void endSingleTimeCommands(VkCommandBuffer command_buffer, VkQueue queue,
+                           VkDevice logical_device,
+                           VkCommandPool command_pool) {
+  // end recording
+  vkEndCommandBuffer(command_buffer);
+
+  // Submit single command buffer
+  VkSubmitInfo submit_info = {};
+  submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submit_info.commandBufferCount = 1;
+  submit_info.pCommandBuffers = &command_buffer;
+
+  // Submit commands
+  vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE);
+
+  // wait for operations to finish
+  vkQueueWaitIdle(queue);
+
+  vkFreeCommandBuffers(logical_device, command_pool, 1, &command_buffer);
+}
+
 void createBuffer(VkDevice logical_device, VkPhysicalDevice physical_device,
                   VkDeviceSize size, VkBufferUsageFlags usage,
                   VkMemoryPropertyFlags properties, VkBuffer& buffer,
@@ -890,26 +933,98 @@ void HelloTriangleApplication::createImageViews() {
   }
 }
 
+void HelloTriangleApplication::transitionImageLayout(VkImage image,
+                                                     VkFormat format,
+                                                     VkImageLayout old_layout,
+                                                     VkImageLayout new_layout) {
+  // Format will be used later for special transitions in the depth buffer
+  (void) format;
+
+  // Start recording command buffer for our transition operations
+  VkCommandBuffer command_buffer =
+      beginSingleTimeCommands(logical_device, command_pool);
+
+  // Pipeline barrier, rather than host<->device sync
+  VkImageMemoryBarrier barrier = {};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = old_layout;
+  barrier.newLayout = new_layout;
+  // We're not transferring queue ownwership
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+
+  // Specifies operations that should happen before the barrier
+  VkPipelineStageFlags source_stage;
+  // Specifies operations that should happen after the barrier
+  VkPipelineStageFlags destination_stage;
+
+  if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+      new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    // Undefined to copy transition has no dependancies to wait on
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+	// Earliest possible stage
+    source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+             new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+	// Shader read layouy has a dependency on shader writes
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    source_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    destination_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  } else {
+    throw std::invalid_argument("unsupported layout transition!");
+  }
+
+  vkCmdPipelineBarrier(command_buffer, source_stage, destination_stage, 0, 0,
+                       nullptr, 0, nullptr, 1, &barrier);
+
+  endSingleTimeCommands(command_buffer, graphics_queue, logical_device,
+                        command_pool);
+}
+
+void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image,
+                                                 uint32_t width,
+                                                 uint32_t height) {
+  VkCommandBuffer command_buffer =
+      beginSingleTimeCommands(logical_device, command_pool);
+
+  VkBufferImageCopy region = {};
+  // Byte offset at which pixel to start
+  region.bufferOffset = 0;
+  // Specify how the pixels are laid out in memory, 0 signififes tightly packed
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  // Which part of image we want to copy the pixe tols
+  region.imageOffset = {0, 0, 0};
+  region.imageExtent = {width, height, 1};
+
+  // layour for optimial copying
+  const VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  vkCmdCopyBufferToImage(command_buffer, buffer, image, layout, 1, &region);
+
+  endSingleTimeCommands(command_buffer, graphics_queue, logical_device,
+                        command_pool);
+}
+
 void HelloTriangleApplication::copyBuffer(VkBuffer src_buffer,
                                           VkBuffer dst_buffer,
                                           VkDeviceSize size) {
-  // Allocate command buffer to submit
-  VkCommandBufferAllocateInfo alloc_info = {};
-  alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  alloc_info.commandPool = command_pool;
-  alloc_info.commandBufferCount = 1;
-
-  VkCommandBuffer command_buffer;
-  vkAllocateCommandBuffers(logical_device, &alloc_info, &command_buffer);
-
-  // start recording
-  VkCommandBufferBeginInfo begin_info = {};
-  begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  // Only submitted once
-  begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-  vkBeginCommandBuffer(command_buffer, &begin_info);
+  VkCommandBuffer command_buffer =
+      beginSingleTimeCommands(logical_device, command_pool);
 
   // Copy operation
   VkBufferCopy copy_region = {};
@@ -918,20 +1033,8 @@ void HelloTriangleApplication::copyBuffer(VkBuffer src_buffer,
   copy_region.dstOffset = 0;
   vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
 
-  // end recording
-  vkEndCommandBuffer(command_buffer);
-
-  // Submit copy operation
-  VkSubmitInfo submit_info = {};
-  submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submit_info.commandBufferCount = 1;
-  submit_info.pCommandBuffers = &command_buffer;
-  vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
-
-  // wait for copy operation to finish
-  vkQueueWaitIdle(graphics_queue);
-
-  vkFreeCommandBuffers(logical_device, command_pool, 1, &command_buffer);
+  endSingleTimeCommands(command_buffer, graphics_queue, logical_device,
+                        command_pool);
 }
 
 void HelloTriangleApplication::createIndexBuffer() {
@@ -1558,6 +1661,19 @@ void HelloTriangleApplication::createTextureImage() {
   createImage(logical_device, physical_device, tex_width, tex_height,
               image_format, image_tiling, usage, properties, texture_image,
               texture_image_memory);
+
+  // Transition image layout to one optimal for copying
+  const VkImageLayout copy_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  transitionImageLayout(texture_image, image_format, VK_IMAGE_LAYOUT_UNDEFINED,
+                        copy_layout);
+  // Perform copy
+  copyBufferToImage(staging_buffer, texture_image,
+                    static_cast<uint32_t>(tex_width),
+                    static_cast<uint32_t>(tex_height));
+
+  // Tranition layout to prepare for sampling from the shader
+  transitionImageLayout(texture_image, image_format, copy_layout,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   // Cleanup staging buffers since data lives in image object
   vkDestroyBuffer(logical_device, staging_buffer, nullptr);
