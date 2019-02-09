@@ -569,6 +569,35 @@ void createImage(VkDevice device, VkPhysicalDevice physical_device,
   vkBindImageMemory(device, image, image_memory, 0);
 }
 
+VkImageView createImageView(VkDevice device, VkImage image, VkFormat format) {
+  VkImageViewCreateInfo create_info = {};
+  create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  create_info.image = image;
+  create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  create_info.format = format;
+
+  // Default mapping, don't swizzle channels
+  create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+  // Colour view without any mipmapping or layering
+  create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  create_info.subresourceRange.baseMipLevel = 0;
+  create_info.subresourceRange.levelCount = 1;
+  create_info.subresourceRange.baseArrayLayer = 0;
+  create_info.subresourceRange.layerCount = 1;
+
+  VkImageView image_view;
+  if (vkCreateImageView(device, &create_info, nullptr, &image_view) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to create image view!");
+  }
+
+  return image_view;
+}
+
 // Colour & Position of our rectangles vertices
 const std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  // Top-left red
@@ -642,6 +671,9 @@ void HelloTriangleApplication::initVulkan() {
 
   // Loads an to use as a textire and turns it into a Vulkan image object.
   createTextureImage();
+
+  // Create view to access our texture image
+  createTextureImageView();
 
   // Create a buffer to store our vertex data
   createVertexBuffer();
@@ -907,29 +939,8 @@ void HelloTriangleApplication::createImageViews() {
   // Create a view for every image in our swap chain
   swap_chain_image_views.resize(swap_chain_images.size());
   for (size_t i = 0; i < swap_chain_images.size(); i++) {
-    VkImageViewCreateInfo create_info = {};
-    create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    create_info.image = swap_chain_images[i];
-    create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    create_info.format = swap_chain_image_format;
-
-    // Default mapping, don't swizzle channels
-    create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-    create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-    create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-    create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-    // Colour view without any mipmapping or layering
-    create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    create_info.subresourceRange.baseMipLevel = 0;
-    create_info.subresourceRange.levelCount = 1;
-    create_info.subresourceRange.baseArrayLayer = 0;
-    create_info.subresourceRange.layerCount = 1;
-
-    if (vkCreateImageView(logical_device, &create_info, nullptr,
-                          &swap_chain_image_views[i]) != VK_SUCCESS) {
-      throw std::runtime_error("failed to create image views!");
-    }
+    swap_chain_image_views[i] = createImageView(
+        logical_device, swap_chain_images[i], swap_chain_image_format);
   }
 }
 
@@ -938,7 +949,7 @@ void HelloTriangleApplication::transitionImageLayout(VkImage image,
                                                      VkImageLayout old_layout,
                                                      VkImageLayout new_layout) {
   // Format will be used later for special transitions in the depth buffer
-  (void) format;
+  (void)format;
 
   // Start recording command buffer for our transition operations
   VkCommandBuffer command_buffer =
@@ -970,12 +981,12 @@ void HelloTriangleApplication::transitionImageLayout(VkImage image,
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
-	// Earliest possible stage
+    // Earliest possible stage
     source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
   } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
              new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-	// Shader read layouy has a dependency on shader writes
+    // Shader read layouy has a dependency on shader writes
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
@@ -1680,6 +1691,11 @@ void HelloTriangleApplication::createTextureImage() {
   vkFreeMemory(logical_device, staging_buffer_memory, nullptr);
 }
 
+void HelloTriangleApplication::createTextureImageView() {
+  texture_image_view =
+      createImageView(logical_device, texture_image, VK_FORMAT_R8G8B8A8_UNORM);
+}
+
 void HelloTriangleApplication::drawFrame() {
   FrameSync& sync = frame_sync[current_frame];
 
@@ -1816,6 +1832,7 @@ HelloTriangleApplication::~HelloTriangleApplication() {
 
   cleanupSwapChain();
 
+  vkDestroyImageView(logical_device, texture_image_view, nullptr);
   vkDestroyImage(logical_device, texture_image, nullptr);
   vkFreeMemory(logical_device, texture_image_memory, nullptr);
 
