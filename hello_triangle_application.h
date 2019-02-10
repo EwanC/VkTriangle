@@ -30,6 +30,7 @@ class HelloTriangleApplication {
   void createCommandPool();
   void createTextureImage();
   void createTextureImageView();
+  void createTextureSampler();
   void copyBuffer(VkBuffer, VkBuffer, VkDeviceSize);
   void transitionImageLayout(VkImage, VkFormat, VkImageLayout, VkImageLayout);
   void copyBufferToImage(VkBuffer, VkImage, uint32_t, uint32_t);
@@ -76,6 +77,7 @@ class HelloTriangleApplication {
   VkImage texture_image;
   VkDeviceMemory texture_image_memory;
   VkImageView texture_image_view;
+  VkSampler texture_sampler;
   std::vector<VkCommandBuffer> command_buffers;
 
   std::vector<VkBuffer> uniform_buffers;

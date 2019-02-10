@@ -675,6 +675,11 @@ void HelloTriangleApplication::initVulkan() {
   // Create view to access our texture image
   createTextureImageView();
 
+  // Creaye a sampler to read colours from the texture in the shader, samplers
+  // apply filtering(e.g bilinear, anisotropic) and transformations(e.g clamp
+  // to egde, mirror repeat) to compute the final color that is retrieved.
+  createTextureSampler();
+
   // Create a buffer to store our vertex data
   createVertexBuffer();
 
@@ -798,11 +803,20 @@ void HelloTriangleApplication::pickPhysicalDevice() {
     // image format and one supported presentation mode will do for now
     const SwapChainSupportDetails swap_chain_support =
         querySwapChainSupport(surface, dev);
-    if (!swap_chain_support.formats.empty() &&
-        !swap_chain_support.present_modes.empty()) {
-      physical_device = dev;
-      break;
+    if (swap_chain_support.formats.empty() ||
+        swap_chain_support.present_modes.empty()) {
+      continue;
     }
+
+    // Check support for ansiotropic filtering for our texure sampler
+    VkPhysicalDeviceFeatures supported_features;
+    vkGetPhysicalDeviceFeatures(dev, &supported_features);
+    if (!supported_features.samplerAnisotropy) {
+      continue;
+    }
+
+    // Physcial device meets all our criteria for suitablilty
+    physical_device = dev;
   }
 
   if (physical_device == VK_NULL_HANDLE) {
@@ -831,6 +845,7 @@ void HelloTriangleApplication::createLogicalDevice() {
 
   // Don't need any special features, all entries default to VK_FALSE
   VkPhysicalDeviceFeatures device_features = {};
+  device_features.samplerAnisotropy = VK_TRUE;  // Used in texture samper
 
   VkDeviceCreateInfo create_info = {};
   create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1696,6 +1711,36 @@ void HelloTriangleApplication::createTextureImageView() {
       createImageView(logical_device, texture_image, VK_FORMAT_R8G8B8A8_UNORM);
 }
 
+void HelloTriangleApplication::createTextureSampler() {
+  // Specify filters and transformations sampler should apply
+  VkSamplerCreateInfo sampler_info = {};
+  sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  // magFilter and minFilter fields define how to interpolate texels that are
+  // magnified(oversampling) or minified(undefsampling).
+  // We'll use linear interpolation
+  sampler_info.magFilter = VK_FILTER_LINEAR;
+  sampler_info.minFilter = VK_FILTER_LINEAR;
+  // Addressing mode per axis: U,V,W instead of X,Y,Z is a texture space
+  // convention. We'll repeat the texture when going beyond image dimensions
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  // Limits the amount of texel samples that can be used to calculate the final
+  // colour in ansioropy filter
+  sampler_info.anisotropyEnable = VK_TRUE;
+  sampler_info.maxAnisotropy = 16;
+  sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  sampler_info.unnormalizedCoordinates = VK_FALSE;  // normalized to [0, 1)
+  sampler_info.compareEnable = VK_FALSE;
+  sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+  sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+  if (vkCreateSampler(logical_device, &sampler_info, nullptr,
+                      &texture_sampler) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create texture sampler!");
+  }
+}
+
 void HelloTriangleApplication::drawFrame() {
   FrameSync& sync = frame_sync[current_frame];
 
@@ -1832,6 +1877,7 @@ HelloTriangleApplication::~HelloTriangleApplication() {
 
   cleanupSwapChain();
 
+  vkDestroySampler(logical_device, texture_sampler, nullptr);
   vkDestroyImageView(logical_device, texture_image_view, nullptr);
   vkDestroyImage(logical_device, texture_image, nullptr);
   vkFreeMemory(logical_device, texture_image_memory, nullptr);
