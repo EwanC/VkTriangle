@@ -1,13 +1,16 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+// Sampler
+layout(binding = 1) uniform sampler2D texSampler;
+
 // output colour for framebuffer
 layout(location = 0) out vec4 outColor;
 
-// per-vertex input colour from vertex shader
-layout(location = 0) in vec3 fragColour;
+layout(location = 0) in vec3 fragColor; // per-vertex input colour from vertex shader
+layout(location = 1) in vec2 fragTexCoord; // Texture coordinate
 
 void main() {
-  // output format is RGB & alpha channels
-  outColor = vec4(fragColour, 1.0);
+  // Sample texture at coordinate
+  outColor = texture(texSampler, fragTexCoord);
 }

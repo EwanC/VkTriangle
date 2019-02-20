@@ -317,6 +317,7 @@ SwapChainSupportDetails querySwapChainSupport(VkSurfaceKHR surface,
 struct Vertex final {
   glm::vec2 pos;
   glm::vec3 colour;
+  glm::vec2 tex_coord;
 
   static VkVertexInputBindingDescription getBindingDescription() {
     // A vertex binding describes how to load data from memory throughout the
@@ -331,12 +332,12 @@ struct Vertex final {
     return binding_description;
   }
 
-  static std::array<VkVertexInputAttributeDescription, 2>
+  static std::array<VkVertexInputAttributeDescription, 3>
   getAttributeDescriptions() {
     // attribute description desfines how to extract a vertex attribute
     // from a chunk of vertex data originating from a binding description.
     // We have 2 attributes, colour and position
-    std::array<VkVertexInputAttributeDescription, 2> attribute_descriptions =
+    std::array<VkVertexInputAttributeDescription, 3> attribute_descriptions =
         {};
 
     // position attribute
@@ -353,6 +354,12 @@ struct Vertex final {
     // 3-component vector of 32-bit single precision floats
     attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     attribute_descriptions[1].offset = offsetof(Vertex, colour);
+
+    // Texture coordinates
+    attribute_descriptions[2].binding = 0;
+    attribute_descriptions[2].location = 2;
+    attribute_descriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attribute_descriptions[2].offset = offsetof(Vertex, tex_coord);
 
     return attribute_descriptions;
   }
@@ -600,10 +607,10 @@ VkImageView createImageView(VkDevice device, VkImage image, VkFormat format) {
 
 // Colour & Position of our rectangles vertices
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  // Top-left red
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},   // Top-right green
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},    // Bottom-right blue
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}    // Bottom-right white
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},  // Top-left red
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},   // Top-right green
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},    // Bottom-right blue
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}    // Bottom-right white
 };
 
 // Indicies into vertex buffer of 2 triangles used to make
@@ -1121,15 +1128,19 @@ void HelloTriangleApplication::createUniformBuffers() {
 }
 
 void HelloTriangleApplication::createDescriptorPool() {
-  // We'll allocate a descriptor for every frame
-  VkDescriptorPoolSize pool_size = {};
-  pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  pool_size.descriptorCount = static_cast<uint32_t>(swap_chain_images.size());
+  // We'll allocate descriptors for every frame
+  std::array<VkDescriptorPoolSize, 2> pool_sizes = {};
+  pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  pool_sizes[0].descriptorCount =
+      static_cast<uint32_t>(swap_chain_images.size());
+  pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pool_sizes[1].descriptorCount =
+      static_cast<uint32_t>(swap_chain_images.size());
 
   VkDescriptorPoolCreateInfo pool_info = {};
   pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  pool_info.poolSizeCount = 1;
-  pool_info.pPoolSizes = &pool_size;
+  pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+  pool_info.pPoolSizes = pool_sizes.data();
   pool_info.maxSets = static_cast<uint32_t>(swap_chain_images.size());
 
   if (vkCreateDescriptorPool(logical_device, &pool_info, nullptr,
@@ -1163,16 +1174,33 @@ void HelloTriangleApplication::createDescriptorSets() {
     buffer_info.offset = 0;
     buffer_info.range = sizeof(UniformBufferObject);
 
-    VkWriteDescriptorSet descriptor_write = {};
-    descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptor_write.dstSet = descriptor_sets[i];
-    descriptor_write.dstBinding = 0;  // binding index from shader
-    descriptor_write.dstArrayElement = 0;
-    descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptor_write.descriptorCount = 1;
-    descriptor_write.pBufferInfo = &buffer_info;
+    VkDescriptorImageInfo image_info = {};
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    image_info.imageView = texture_image_view;
+    image_info.sampler = texture_sampler;
 
-    vkUpdateDescriptorSets(logical_device, 1, &descriptor_write, 0, nullptr);
+    std::array<VkWriteDescriptorSet, 2> descriptor_writes = {};
+
+    descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptor_writes[0].dstSet = descriptor_sets[i];
+    descriptor_writes[0].dstBinding = 0;  // binding index from shader
+    descriptor_writes[0].dstArrayElement = 0;
+    descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptor_writes[0].descriptorCount = 1;
+    descriptor_writes[0].pBufferInfo = &buffer_info;
+
+    descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptor_writes[1].dstSet = descriptor_sets[i];
+    descriptor_writes[1].dstBinding = 1;  // binding index from shader
+    descriptor_writes[1].dstArrayElement = 0;
+    descriptor_writes[1].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptor_writes[1].descriptorCount = 1;
+    descriptor_writes[1].pImageInfo = &image_info;
+
+    vkUpdateDescriptorSets(logical_device,
+                           static_cast<uint32_t>(descriptor_writes.size()),
+                           descriptor_writes.data(), 0, nullptr);
   }
 }
 
@@ -1405,10 +1433,21 @@ void HelloTriangleApplication::createDescriptorSetLayout() {
   ubo_layout_binding.pImmutableSamplers = nullptr;
   ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
+  // Sampler will be used in our fragment shader
+  VkDescriptorSetLayoutBinding sampler_layout_binding = {};
+  sampler_layout_binding.binding = 1;
+  sampler_layout_binding.descriptorCount = 1;
+  sampler_layout_binding.descriptorType =
+      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sampler_layout_binding.pImmutableSamplers = nullptr;
+  sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+      ubo_layout_binding, sampler_layout_binding};
   VkDescriptorSetLayoutCreateInfo layout_info = {};
   layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layout_info.bindingCount = 1;
-  layout_info.pBindings = &ubo_layout_binding;
+  layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+  layout_info.pBindings = bindings.data();
 
   // Initalize descriptor_set_layout used in graphics pipeline creation
   if (vkCreateDescriptorSetLayout(logical_device, &layout_info, nullptr,
